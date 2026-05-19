@@ -1,13 +1,4 @@
-# QKFormer: Hierarchical Spiking Transformer using Q-K Attention ([NeurIPS 2024](https://openreview.net/forum?id=AVd7DpiooC))
-
-QKFormer achieves **a groundbreaking top-1 accuracy of **85.65%** on ImageNet-1k**, the first time **directly training SNNs** have exceeded 85% accuracy on ImageNet-1K.
-
-## News
-
-[2024.10.10] Update code and trained models.
-
-[2024.09.25] Accepted as a spotlight in NeurIPS 2024.
-
+# QKFormer: Hierarchical Spiking Transformer using Q-K Attention 
 
 
 ## Abstact
