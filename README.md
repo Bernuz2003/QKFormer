@@ -128,4 +128,5 @@ url={https://openreview.net/forum?id=AVd7DpiooC}
 
 ## Acknowledgement
 
-Recommendation: [MaxFormer](https://github.com/bic-L/MaxFormer), a model that inherits QKFormer's architecture yet successfully addresses its shortcomings. 
+We recommend using [MaxFormer](https://github.com/bic-L/MaxFormer), a variant of QKFormer, as the research subject — a model that inherits QKFormer's architecture yet successfully addresses its shortcomings.
+
