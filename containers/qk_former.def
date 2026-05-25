@@ -1,0 +1,67 @@
+Bootstrap: docker
+From: python:3.10-slim
+
+%post
+    set -eux
+
+    apt-get update
+    apt-get install -y --no-install-recommends \
+        git \
+        build-essential \
+        screen \
+        ca-certificates \
+        wget \
+        patchelf \
+        libglib2.0-0 \
+        libgl1
+    rm -rf /var/lib/apt/lists/*
+
+    python -m pip install --no-cache-dir --upgrade pip setuptools wheel
+
+    python -m pip install --no-cache-dir \
+        torch==1.12.1+cu116 \
+        torchvision==0.13.1+cu116 \
+        -f https://download.pytorch.org/whl/torch_stable.html
+
+    python -m pip install --no-cache-dir \
+        timm==0.6.12 \
+        spikingjelly==0.0.0.0.12 \
+        cupy-cuda11x==11.4.0 \
+        numpy \
+        pyyaml \
+        pandas \
+        matplotlib \
+        tensorboard \
+        tabulate \
+        tqdm \
+        pytest \
+        torchinfo
+
+    TORCH_LIB_DIR="$(python - <<'PY'
+import pathlib
+import site
+
+for site_dir in site.getsitepackages():
+    torch_lib = pathlib.Path(site_dir) / "torch" / "lib"
+    if torch_lib.exists():
+        print(torch_lib)
+        break
+PY
+)"
+    find "$TORCH_LIB_DIR" -type f -name "*.so*" -exec patchelf --clear-execstack {} \;
+
+    python - <<'PY'
+import torch
+
+print("torch:", torch.__version__)
+print("cuda version:", torch.version.cuda)
+PY
+
+%environment
+    export MPLBACKEND=Agg
+    export PYTHONUNBUFFERED=1
+    export LD_LIBRARY_PATH=/usr/local/lib/python3.10/site-packages/torch/lib:$LD_LIBRARY_PATH
+
+%runscript
+    set -e
+    exec python "$@"
