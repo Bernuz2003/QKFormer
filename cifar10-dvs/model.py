@@ -155,7 +155,8 @@ class Spiking_Self_Attention(nn.Module):
         x = x.transpose(3, 4).reshape(T, B, C, N).contiguous()
         x = self.attn_lif(x)
         x = x.flatten(0, 1)
-        x = self.proj_lif(self.proj_bn(self.proj_conv(x))).reshape(T, B, C, W, H)
+        x = self.proj_bn(self.proj_conv(x)).reshape(T, B, C, W, H)
+        x = self.proj_lif(x)
         return x
 
 class TokenSpikingTransformer(nn.Module):

@@ -37,30 +37,48 @@ From: python:3.10-slim
         pytest \
         torchinfo
 
-    TORCH_LIB_DIR="$(python - <<'PY'
+    python -m pip install --no-cache-dir \
+        nvidia-cuda-runtime-cu11 \
+        nvidia-cuda-nvrtc-cu11 \
+        nvidia-cublas-cu11 \
+        nvidia-cufft-cu11 \
+        nvidia-curand-cu11 \
+        nvidia-cusolver-cu11 \
+        nvidia-cusparse-cu11
+
+    SITE_PACKAGES="$(python - <<'PY'
 import pathlib
 import site
 
 for site_dir in site.getsitepackages():
-    torch_lib = pathlib.Path(site_dir) / "torch" / "lib"
-    if torch_lib.exists():
-        print(torch_lib)
+    if pathlib.Path(site_dir).exists():
+        print(site_dir)
         break
 PY
 )"
+    TORCH_LIB_DIR="$SITE_PACKAGES/torch/lib"
+    NVIDIA_LIB_DIR="$SITE_PACKAGES/nvidia"
     find "$TORCH_LIB_DIR" -type f -name "*.so*" -exec patchelf --clear-execstack {} \;
+    if [ -d "$NVIDIA_LIB_DIR" ]; then
+        find "$NVIDIA_LIB_DIR" -type f -name "*.so*" -exec patchelf --clear-execstack {} \;
+    fi
+
+    export LD_LIBRARY_PATH="$TORCH_LIB_DIR:$NVIDIA_LIB_DIR/cuda_runtime/lib:$NVIDIA_LIB_DIR/cuda_nvrtc/lib:$NVIDIA_LIB_DIR/cublas/lib:$NVIDIA_LIB_DIR/cufft/lib:$NVIDIA_LIB_DIR/curand/lib:$NVIDIA_LIB_DIR/cusolver/lib:$NVIDIA_LIB_DIR/cusparse/lib:$LD_LIBRARY_PATH"
 
     python - <<'PY'
 import torch
+import cupy
 
 print("torch:", torch.__version__)
 print("cuda version:", torch.version.cuda)
+print("cupy:", cupy.__version__)
 PY
 
 %environment
     export MPLBACKEND=Agg
     export PYTHONUNBUFFERED=1
-    export LD_LIBRARY_PATH=/usr/local/lib/python3.10/site-packages/torch/lib:$LD_LIBRARY_PATH
+    export PYTHON_SITE_PACKAGES=/usr/local/lib/python3.10/site-packages
+    export LD_LIBRARY_PATH=$PYTHON_SITE_PACKAGES/torch/lib:$PYTHON_SITE_PACKAGES/nvidia/cuda_runtime/lib:$PYTHON_SITE_PACKAGES/nvidia/cuda_nvrtc/lib:$PYTHON_SITE_PACKAGES/nvidia/cublas/lib:$PYTHON_SITE_PACKAGES/nvidia/cufft/lib:$PYTHON_SITE_PACKAGES/nvidia/curand/lib:$PYTHON_SITE_PACKAGES/nvidia/cusolver/lib:$PYTHON_SITE_PACKAGES/nvidia/cusparse/lib:$LD_LIBRARY_PATH
 
 %runscript
     set -e
