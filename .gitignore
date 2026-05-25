@@ -1,0 +1,54 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE and OS files
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Training outputs
+logs/
+runs/
+activity_logs/
+checkpoints/
+outputs/
+wandb/
+tensorboard/
+screenlog.*
+*.out
+*.err
+
+# Model artifacts
+*.pth
+*.pt
+*.ckpt
+*.onnx
+
+# Datasets and generated CIFAR10-DVS frames
+data/
+dataset/
+datasets/
+cifar10-dvs/frames_number_*_split_by_*/
+
+# Singularity / Apptainer artifacts
+*.sif
+*.simg
+*.sqsh
+*.sandbox/
+singularity-cache/
+apptainer-cache/

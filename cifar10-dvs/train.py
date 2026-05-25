@@ -35,7 +35,7 @@ def parse_args():
     import argparse
     parser = argparse.ArgumentParser(description='PyTorch Classification Training')
 
-    parser.add_argument('--model', default='SEWResNet', help='model')
+    parser.add_argument('--model', default='QKFormer', help='model')
     parser.add_argument('--dataset', default='cifar10dvs', help='dataset')
     parser.add_argument('--num-classes', type=int, default=10, metavar='N',
                         help='number of label classes (default: 1000)')
@@ -371,7 +371,7 @@ def main(args):
 
     model = create_model(
         #'Spikingformer',
-        "QKFormer",
+        args.model,
         #'sglformer2',
         pretrained=False,
         drop_rate=0.,
@@ -385,8 +385,8 @@ def main(args):
     if args.distributed and args.sync_bn:
         model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
     # criterion_train = LabelSmoothingCrossEntropy()
-    criterion_train = SoftTargetCrossEntropy().cuda()
-    criterion = nn.CrossEntropyLoss()
+    criterion_train = SoftTargetCrossEntropy().to(device)
+    criterion = nn.CrossEntropyLoss().to(device)
 
     optimizer = create_optimizer(args, model)
     if args.amp:

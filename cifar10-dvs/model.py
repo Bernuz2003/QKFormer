@@ -7,7 +7,7 @@ from timm.models.vision_transformer import _cfg
 from functools import partial
 from timm.models import create_model
 
-__all__ = ['QKFormer']
+__all__ = ['QKFormer', 'Mini_QKFormer_128']
 
 class MLP(nn.Module):
     def __init__(self, in_features, hidden_features=None, out_features=None, drop=0.):
@@ -385,6 +385,18 @@ class vit_snn(nn.Module):
 def QKFormer(pretrained=False, **kwargs):
     model = vit_snn(
         patch_size=16, embed_dims=256, num_heads=16, mlp_ratios=1,
+        in_channels=2, num_classes=10, qkv_bias=False,
+        norm_layer=partial(nn.LayerNorm, eps=1e-6), depths=4, sr_ratios=1,
+        **kwargs
+    )
+    model.default_cfg = _cfg()
+    return model
+
+
+@register_model
+def Mini_QKFormer_128(pretrained=False, **kwargs):
+    model = vit_snn(
+        patch_size=16, embed_dims=128, num_heads=16, mlp_ratios=1,
         in_channels=2, num_classes=10, qkv_bias=False,
         norm_layer=partial(nn.LayerNorm, eps=1e-6), depths=4, sr_ratios=1,
         **kwargs
