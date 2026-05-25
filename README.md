@@ -85,48 +85,38 @@ cd cifar10-dvs
 python train.py
 ```
 
-## Reference
-If you find this repo useful, please consider citing:
-```
-@inproceedings{
-zhou2024qkformer,
-title={{QKF}ormer: Hierarchical Spiking Transformer using Q-K Attention},
-author={Chenlin Zhou and Han Zhang and Zhaokun Zhou and Liutao Yu and Liwei Huang and Xiaopeng Fan and Li Yuan and Zhengyu Ma and Huihui Zhou and Yonghong Tian},
-booktitle={The Thirty-eighth Annual Conference on Neural Information Processing Systems},
-year={2024},
-url={https://openreview.net/forum?id=AVd7DpiooC}
-}
 
-@article{zhou2024direct,
-  title={Direct training high-performance deep spiking neural networks: a review of theories and methods},
-  author={Zhou, Chenlin and Zhang, Han and Yu, Liutao and Ye, Yumin and Zhou, Zhaokun and Huang, Liwei and Ma, Zhengyu and Fan, Xiaopeng and Zhou, Huihui and Tian, Yonghong},
-  journal={Frontiers in Neuroscience},
-  volume={18},
-  pages={1383844},
-  year={2024},
-  publisher={Frontiers Media SA}
-}
+## Notice: Implementation Issue in SSA
 
-@article{zhang2024sglformer,
-  title={SGLFormer: Spiking Global-Local-Fusion Transformer with high performance},
-  author={Zhang, Han and Zhou, Chenlin and Yu, Liutao and Huang, Liwei and Ma, Zhengyu and Fan, Xiaopeng and Zhou, Huihui and Tian, Yonghong},
-  journal={Frontiers in Neuroscience},
-  volume={18},
-  pages={1371290},
-  year={2024},
-  publisher={Frontiers Media SA}
-}
+### Issue Description & Fix
 
-@article{zhou2023spikingformer,
-  title={Spikingformer: Spike-driven residual learning for transformer-based spiking neural network},
-  author={Zhou, Chenlin and Yu, Liutao and Zhou, Zhaokun and Ma, Zhengyu and Zhang, Han and Zhou, Huihui and Tian, Yonghong},
-  journal={arXiv preprint arXiv:2304.11954},
-  year={2023}
-}
-```
+See the related issue: https://github.com/zhouchenlin2096/QKFormer/issues/14
+
+We identified an implementation issue in the SSA module of the original repository. Specifically, the last line of the original implementation was:
+
+```python
+x = self.proj_lif(self.proj_bn(self.proj_conv(x))).reshape(T, B, C, W, H)
+``` 
+In this implementation, the LIF neuron is applied before reshaping the tensor back to the shape of (T, B, C, W, H), which may unintentionally mix the membrane potentials of different samples. The correct implementation should first restore the tensor shape and then apply the LIF neuron:
+
+```python
+x = self.proj_lif(self.proj_bn(self.proj_conv(x)).reshape(T, B, C, W, H))
+``` 
+
+### Impact on Reported Results
+
+Our reproduced experiments indicate that this issue can lead to somewhat overestimated results on ImageNet. In contrast, its impact on the other four datasets—CIFAR-10, CIFAR-100, CIFAR10-DVS, and DVS128—is minimal, with only negligible differences observed between the two implementations.
+
+This implementation issue does not affect the validity of the core methodological designs proposed in the paper, including the hybrid spiking attention mechanism, Spiking Patch Embedding with Deformed Shortcut (SPEDS), and the hierarchical spiking architecture. The method remains effective, and related architectural designs have been further supported and extended by subsequent studies [1,2,3]. Therefore, while this implementation issue affects part of the reported numerical results, particularly those on ImageNet, it does not alter the main conclusion of the paper.
 
 
-## Acknowledgement
+### Recommendation for Future Research
+For researchers building upon this work, **we strongly recommend using MaxFormer (https://github.com/bic-L/MaxFormer) [1], a variant of QKFormer, as the research subject. MaxFormer inherits the architectural design of QKFormer and uses an implementation that avoids the SSA issue described above.**
 
-We recommend using [MaxFormer](https://github.com/bic-L/MaxFormer), a variant of QKFormer, as the research subject — a model that inherits QKFormer's architecture yet successfully addresses its shortcomings.
+
+[1] Spiking Neural Networks Need High-Frequency Information, NeurIPS 2025.
+
+[2] Scaling Spike-driven Transformer with Efficient Spike Firing Approximation Training.
+
+[3] SpikingBrain: Spiking Brain-inspired Large Models.
 
