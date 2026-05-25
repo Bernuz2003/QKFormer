@@ -164,8 +164,16 @@ def split_to_train_test_set(train_ratio: float, origin_dataset: torch.utils.data
     for i in range(num_classes):
         label_idx.append([])
 
-    for i, item in enumerate(origin_dataset):
-        y = item[1]
+    # CIFAR10-DVS inherits from torchvision DatasetFolder, whose samples list
+    # already contains (path, class_index). Avoid loading every .npz just to
+    # build the deterministic per-class split.
+    samples = getattr(origin_dataset, 'samples', None)
+    if samples is not None:
+        label_iter = ((i, sample[1]) for i, sample in enumerate(samples))
+    else:
+        label_iter = ((i, item[1]) for i, item in enumerate(origin_dataset))
+
+    for i, y in label_iter:
         if isinstance(y, np.ndarray) or isinstance(y, torch.Tensor):
             y = y.item()
         label_idx[y].append(i)
