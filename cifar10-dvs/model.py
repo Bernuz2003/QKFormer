@@ -9,6 +9,18 @@ from timm.models import create_model
 
 __all__ = ['QKFormer', 'Mini_QKFormer_128']
 
+
+def spiking_backend():
+    try:
+        import cupy  # noqa: F401
+        return 'cupy'
+    except Exception:
+        return 'torch'
+
+
+SPIKING_BACKEND = spiking_backend()
+
+
 class MLP(nn.Module):
     def __init__(self, in_features, hidden_features=None, out_features=None, drop=0.):
         super().__init__()
@@ -16,11 +28,11 @@ class MLP(nn.Module):
         hidden_features = hidden_features or in_features
         self.mlp1_conv = nn.Conv2d(in_features, hidden_features, kernel_size=1, stride=1)
         self.mlp1_bn = nn.BatchNorm2d(hidden_features)
-        self.mlp1_lif = MultiStepLIFNode(tau=2.0, detach_reset=True, backend='cupy')
+        self.mlp1_lif = MultiStepLIFNode(tau=2.0, detach_reset=True, backend=SPIKING_BACKEND)
 
         self.mlp2_conv = nn.Conv2d(hidden_features, out_features, kernel_size=1, stride=1)
         self.mlp2_bn = nn.BatchNorm2d(out_features)
-        self.mlp2_lif = MultiStepLIFNode(tau=2.0, detach_reset=True, backend='cupy')
+        self.mlp2_lif = MultiStepLIFNode(tau=2.0, detach_reset=True, backend=SPIKING_BACKEND)
 
         self.c_hidden = hidden_features
         self.c_output = out_features
@@ -47,17 +59,17 @@ class Token_QK_Attention(nn.Module):
 
         self.q_conv = nn.Conv1d(dim, dim, kernel_size=1, stride=1, bias=False)
         self.q_bn = nn.BatchNorm1d(dim)
-        self.q_lif = MultiStepLIFNode(tau=2.0, detach_reset=True, backend='cupy')
+        self.q_lif = MultiStepLIFNode(tau=2.0, detach_reset=True, backend=SPIKING_BACKEND)
 
         self.k_conv = nn.Conv1d(dim, dim, kernel_size=1, stride=1, bias=False)
         self.k_bn = nn.BatchNorm1d(dim)
-        self.k_lif = MultiStepLIFNode(tau=2.0, detach_reset=True, backend='cupy')
+        self.k_lif = MultiStepLIFNode(tau=2.0, detach_reset=True, backend=SPIKING_BACKEND)
 
-        self.attn_lif = MultiStepLIFNode(tau=2.0, v_threshold=0.5, detach_reset=True, backend='cupy')
+        self.attn_lif = MultiStepLIFNode(tau=2.0, v_threshold=0.5, detach_reset=True, backend=SPIKING_BACKEND)
 
         self.proj_conv = nn.Conv1d(dim, dim, kernel_size=1, stride=1)
         self.proj_bn = nn.BatchNorm1d(dim)
-        self.proj_lif = MultiStepLIFNode(tau=2.0, detach_reset=True, backend='cupy')
+        self.proj_lif = MultiStepLIFNode(tau=2.0, detach_reset=True, backend=SPIKING_BACKEND)
 
     def forward(self, x):
         T, B, C, H, W = x.shape
@@ -95,20 +107,20 @@ class Spiking_Self_Attention(nn.Module):
         self.scale = 0.125
         self.q_conv = nn.Conv1d(dim, dim, kernel_size=1, stride=1, bias=False)
         self.q_bn = nn.BatchNorm1d(dim)
-        self.q_lif = MultiStepLIFNode(tau=2.0, detach_reset=True, backend='cupy')
+        self.q_lif = MultiStepLIFNode(tau=2.0, detach_reset=True, backend=SPIKING_BACKEND)
 
         self.k_conv = nn.Conv1d(dim, dim, kernel_size=1, stride=1, bias=False)
         self.k_bn = nn.BatchNorm1d(dim)
-        self.k_lif = MultiStepLIFNode(tau=2.0, detach_reset=True, backend='cupy')
+        self.k_lif = MultiStepLIFNode(tau=2.0, detach_reset=True, backend=SPIKING_BACKEND)
 
         self.v_conv = nn.Conv1d(dim, dim, kernel_size=1, stride=1, bias=False)
         self.v_bn = nn.BatchNorm1d(dim)
-        self.v_lif = MultiStepLIFNode(tau=2.0, detach_reset=True, backend='cupy')
-        self.attn_lif = MultiStepLIFNode(tau=2.0, v_threshold=0.5, detach_reset=True, backend='cupy')
+        self.v_lif = MultiStepLIFNode(tau=2.0, detach_reset=True, backend=SPIKING_BACKEND)
+        self.attn_lif = MultiStepLIFNode(tau=2.0, v_threshold=0.5, detach_reset=True, backend=SPIKING_BACKEND)
 
         self.proj_conv = nn.Conv1d(dim, dim, kernel_size=1, stride=1)
         self.proj_bn = nn.BatchNorm1d(dim)
-        self.proj_lif = MultiStepLIFNode(tau=2.0, detach_reset=True, backend='cupy')
+        self.proj_lif = MultiStepLIFNode(tau=2.0, detach_reset=True, backend=SPIKING_BACKEND)
 
         self.qkv_mp = nn.MaxPool1d(4)
 
@@ -188,26 +200,26 @@ class PatchEmbedInit(nn.Module):
 
         self.proj_conv = nn.Conv2d(in_channels, embed_dims // 8, kernel_size=3, stride=1, padding=1, bias=False)
         self.proj_bn = nn.BatchNorm2d(embed_dims // 8)
-        self.proj_lif = MultiStepLIFNode(tau=2.0, detach_reset=True, backend='cupy')
+        self.proj_lif = MultiStepLIFNode(tau=2.0, detach_reset=True, backend=SPIKING_BACKEND)
 
         self.proj1_conv = nn.Conv2d(embed_dims // 8, embed_dims // 4, kernel_size=3, stride=1, padding=1, bias=False)
         self.proj1_bn = nn.BatchNorm2d(embed_dims // 4)
         self.maxpool1 = torch.nn.MaxPool2d(kernel_size=3, stride=2, padding=1, dilation=1, ceil_mode=False)
-        self.proj1_lif = MultiStepLIFNode(tau=2.0, detach_reset=True, backend='cupy')
+        self.proj1_lif = MultiStepLIFNode(tau=2.0, detach_reset=True, backend=SPIKING_BACKEND)
 
         self.proj2_conv = nn.Conv2d(embed_dims//4, embed_dims // 2, kernel_size=3, stride=1, padding=1, bias=False)
         self.proj2_bn = nn.BatchNorm2d(embed_dims // 2)
         self.maxpool2 = torch.nn.MaxPool2d(kernel_size=3, stride=2, padding=1, dilation=1, ceil_mode=False)
-        self.proj2_lif = MultiStepLIFNode(tau=2.0, detach_reset=True, backend='cupy')
+        self.proj2_lif = MultiStepLIFNode(tau=2.0, detach_reset=True, backend=SPIKING_BACKEND)
 
         self.proj3_conv = nn.Conv2d(embed_dims // 2, embed_dims, kernel_size=3, stride=1, padding=1, bias=False)
         self.proj3_bn = nn.BatchNorm2d(embed_dims)
         self.maxpool3 = torch.nn.MaxPool2d(kernel_size=3, stride=2, padding=1, dilation=1, ceil_mode=False)
-        self.proj3_lif = MultiStepLIFNode(tau=2.0, detach_reset=True, backend='cupy')
+        self.proj3_lif = MultiStepLIFNode(tau=2.0, detach_reset=True, backend=SPIKING_BACKEND)
 
         self.proj_res_conv = nn.Conv2d(embed_dims // 4, embed_dims, kernel_size=1, stride=4, padding=0, bias=False)
         self.proj_res_bn = nn.BatchNorm2d(embed_dims)
-        self.proj_res_lif = MultiStepLIFNode(tau=2.0, detach_reset=True, backend='cupy')
+        self.proj_res_lif = MultiStepLIFNode(tau=2.0, detach_reset=True, backend=SPIKING_BACKEND)
 
 
     def forward(self, x):
@@ -253,16 +265,16 @@ class PatchEmbeddingStage(nn.Module):
 
         self.proj_conv = nn.Conv2d(embed_dims//2, embed_dims, kernel_size=3, stride=1, padding=1, bias=False)
         self.proj_bn = nn.BatchNorm2d(embed_dims)
-        self.proj_lif = MultiStepLIFNode(tau=2.0, detach_reset=True, backend='cupy')
+        self.proj_lif = MultiStepLIFNode(tau=2.0, detach_reset=True, backend=SPIKING_BACKEND)
 
         self.proj4_conv = nn.Conv2d(embed_dims, embed_dims, kernel_size=3, stride=1, padding=1, bias=False)
         self.proj4_bn = nn.BatchNorm2d(embed_dims)
         self.proj4_maxpool = torch.nn.MaxPool2d(kernel_size=3, stride=2, padding=1, dilation=1, ceil_mode=False)
-        self.proj4_lif = MultiStepLIFNode(tau=2.0, detach_reset=True, backend='cupy')
+        self.proj4_lif = MultiStepLIFNode(tau=2.0, detach_reset=True, backend=SPIKING_BACKEND)
 
         self.proj_res_conv = nn.Conv2d(embed_dims//2, embed_dims, kernel_size=1, stride=2, padding=0, bias=False)
         self.proj_res_bn = nn.BatchNorm2d(embed_dims)
-        self.proj_res_lif = MultiStepLIFNode(tau=2.0, detach_reset=True, backend='cupy')
+        self.proj_res_lif = MultiStepLIFNode(tau=2.0, detach_reset=True, backend=SPIKING_BACKEND)
 
     def forward(self, x):
         T, B, C, H, W = x.shape
