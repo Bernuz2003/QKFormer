@@ -4,8 +4,17 @@ import argparse
 import shutil
 from pathlib import Path
 
+import numpy as np
 from spikingjelly import configure
 from spikingjelly.datasets import cifar10_dvs
+
+
+def check_numpy_compatibility() -> None:
+    if not hasattr(np, "bool"):
+        raise RuntimeError(
+            f"NumPy {np.__version__} is too new for spikingjelly==0.0.0.0.12 CIFAR10-DVS preprocessing. "
+            "Use numpy==1.23.5 in the QKFormer container."
+        )
 
 
 def count_npz(path: Path) -> int:
@@ -44,6 +53,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    check_numpy_compatibility()
     root = Path(args.data_path).expanduser().resolve()
     events_dir = root / "events_np"
     frames_dir = root / f"frames_number_{args.T}_split_by_{args.split_by}"

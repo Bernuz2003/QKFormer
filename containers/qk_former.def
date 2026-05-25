@@ -27,7 +27,7 @@ From: python:3.10-slim
         timm==0.6.12 \
         spikingjelly==0.0.0.0.12 \
         cupy-cuda11x==11.4.0 \
-        numpy \
+        numpy==1.23.5 \
         pyyaml \
         pandas \
         matplotlib \
