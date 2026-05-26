@@ -166,9 +166,14 @@ class QKFormerActivityProfiler:
             is_binary_output,
         )
         structure = module_structure(module)
-        dense_macs = dense_macs(module, out)
-        attention_ops = self._attention_ops(module, inp)
-        estimated_sops = self._estimate_sops(dense_macs, attention_ops, is_binary_input, input_fr)
+        dense_macs_value = dense_macs(module, out)
+        attention_ops_value = self._attention_ops(module, inp)
+        estimated_sops_value = self._estimate_sops(
+            dense_macs_value,
+            attention_ops_value,
+            is_binary_input,
+            input_fr,
+        )
         category, network_stage = categorize_layer(name, module)
 
         return LayerActivity(
@@ -204,9 +209,9 @@ class QKFormerActivityProfiler:
             in_features=structure.get("in_features"),
             out_features=structure.get("out_features"),
             time_steps=self.time_steps,
-            dense_macs=float(dense_macs),
-            attention_ops=float(attention_ops),
-            estimated_sops=float(estimated_sops),
+            dense_macs=float(dense_macs_value),
+            attention_ops=float(attention_ops_value),
+            estimated_sops=float(estimated_sops_value),
         )
 
     def _temporal_density(
