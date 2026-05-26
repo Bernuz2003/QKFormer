@@ -465,8 +465,14 @@ def split_to_train_test_set(
     num_classes: int,
 ) -> tuple[torch.utils.data.Subset, torch.utils.data.Subset]:
     label_idx: list[list[int]] = [[] for _ in range(num_classes)]
-    for index, item in enumerate(origin_dataset):
-        label = item[1]
+
+    samples = getattr(origin_dataset, "samples", None)
+    if samples is not None:
+        label_iter = ((index, sample[1]) for index, sample in enumerate(samples))
+    else:
+        label_iter = ((index, item[1]) for index, item in enumerate(origin_dataset))
+
+    for index, label in label_iter:
         if isinstance(label, (np.ndarray, torch.Tensor)):
             label = int(label.item())
         label_idx[int(label)].append(index)
