@@ -372,37 +372,61 @@ def sanitize_token(value: Any) -> str:
 
 def density_by_dim(nonzero: torch.Tensor, keep_dim: int) -> list[float]:
     dims = tuple(dim for dim in range(nonzero.dim()) if dim != keep_dim)
-    return [float(value) for value in nonzero.float().mean(dim=dims).flatten()]
+    return [float(value) for value in reduce_mean(nonzero.float(), dims).flatten()]
 
 
 def sum_by_dim(x: torch.Tensor, keep_dim: int) -> list[float]:
     dims = tuple(dim for dim in range(x.dim()) if dim != keep_dim)
-    return [float(value) for value in x.sum(dim=dims).flatten()]
+    return [float(value) for value in reduce_sum(x, dims).flatten()]
 
 
 def mean_by_dim(x: torch.Tensor, keep_dim: int) -> list[float]:
     dims = tuple(dim for dim in range(x.dim()) if dim != keep_dim)
-    return [float(value) for value in x.mean(dim=dims).flatten()]
+    return [float(value) for value in reduce_mean(x, dims).flatten()]
 
 
 def max_by_dim(x: torch.Tensor, keep_dim: int) -> list[float]:
     dims = tuple(dim for dim in range(x.dim()) if dim != keep_dim)
-    return [float(value) for value in x.amax(dim=dims).flatten()]
+    return [float(value) for value in reduce_max(x, dims).flatten()]
 
 
 def active_pixel_ratio(x: torch.Tensor) -> float:
-    active_pixels = (x != 0).any(dim=(0, 1, 2))
+    active_pixels = reduce_any(x != 0, dims=(0, 1, 2))
     return float(active_pixels.float().mean().item())
 
 
 def active_patch_ratio(x: torch.Tensor, patch_size: int) -> float:
-    active = (x != 0).any(dim=(1, 2))
+    active = reduce_any(x != 0, dims=(1, 2))
     batch, height, width = active.shape
     if height % patch_size != 0 or width % patch_size != 0:
         return 0.0
     active = active.reshape(batch, height // patch_size, patch_size, width // patch_size, patch_size)
-    active_patch = active.any(dim=(2, 4))
+    active_patch = reduce_any(active, dims=(2, 4))
     return float(active_patch.float().mean().item())
+
+
+def reduce_any(x: torch.Tensor, dims: tuple[int, ...]) -> torch.Tensor:
+    for dim in sorted(dims, reverse=True):
+        x = x.any(dim=dim)
+    return x
+
+
+def reduce_sum(x: torch.Tensor, dims: tuple[int, ...]) -> torch.Tensor:
+    for dim in sorted(dims, reverse=True):
+        x = x.sum(dim=dim)
+    return x
+
+
+def reduce_mean(x: torch.Tensor, dims: tuple[int, ...]) -> torch.Tensor:
+    for dim in sorted(dims, reverse=True):
+        x = x.mean(dim=dim)
+    return x
+
+
+def reduce_max(x: torch.Tensor, dims: tuple[int, ...]) -> torch.Tensor:
+    for dim in sorted(dims, reverse=True):
+        x = x.max(dim=dim).values
+    return x
 
 
 def unique_values_sample(x: torch.Tensor, limit: int = 32) -> list[float]:
