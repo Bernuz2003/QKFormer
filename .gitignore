@@ -53,5 +53,5 @@ cifar10-dvs/frames_number_*_split_by_*/
 singularity-cache/
 apptainer-cache/
 
+# Local planning notes
 docs/
-scripts/
