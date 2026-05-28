@@ -396,9 +396,10 @@ class vit_snn(nn.Module):
 
 @register_model
 def QKFormer(pretrained=False, **kwargs):
+    in_channels = kwargs.pop('in_channels', 2)
     model = vit_snn(
         patch_size=16, embed_dims=256, num_heads=16, mlp_ratios=1,
-        in_channels=2, num_classes=10, qkv_bias=False,
+        in_channels=in_channels, num_classes=10, qkv_bias=False,
         norm_layer=partial(nn.LayerNorm, eps=1e-6), depths=4, sr_ratios=1,
         **kwargs
     )
@@ -408,9 +409,10 @@ def QKFormer(pretrained=False, **kwargs):
 
 @register_model
 def Mini_QKFormer_128(pretrained=False, **kwargs):
+    in_channels = kwargs.pop('in_channels', 2)
     model = vit_snn(
         patch_size=16, embed_dims=128, num_heads=16, mlp_ratios=1,
-        in_channels=2, num_classes=10, qkv_bias=False,
+        in_channels=in_channels, num_classes=10, qkv_bias=False,
         norm_layer=partial(nn.LayerNorm, eps=1e-6), depths=4, sr_ratios=1,
         **kwargs
     )

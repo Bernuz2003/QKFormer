@@ -1,6 +1,9 @@
 import datetime
+import csv
+import json
 import os
 import time
+from pathlib import Path
 
 import matplotlib.pyplot as plt
 import torch
@@ -19,6 +22,7 @@ from timm.optim import create_optimizer
 from timm.scheduler import create_scheduler
 from timm.loss import LabelSmoothingCrossEntropy, SoftTargetCrossEntropy
 import autoaugment
+import encoding
 _seed_ = 2021
 import random
 random.seed(2021)
@@ -141,6 +145,7 @@ def parse_args():
                         help='How to apply mixup/cutmix params. Per "batch", "pair", or "elem"')
     parser.add_argument('--mixup-off-epoch', default=0, type=int, metavar='N',
                         help='Turn off mixup after this epoch, disabled if 0 (default: 0)')
+    encoding.add_encoder_args(parser)
     args = parser.parse_args()
     return args
 
@@ -295,14 +300,21 @@ def evaluate(model, criterion, data_loader, device, print_freq=100, header='Test
     print(f' * Acc@1 = {acc1}, Acc@5 = {acc5}, loss = {loss}')
     return loss, acc1, acc5
 
-def load_data(dataset_dir, distributed, T):
+def load_data(dataset_dir, distributed, encoder_config):
     # Data loading code
     print("Loading data")
 
     st = time.time()
 
-    origin_set = cifar10_dvs.CIFAR10DVS(root=dataset_dir, data_type='frame', frames_number=T, split_by='number')
+    origin_set = cifar10_dvs.CIFAR10DVS(
+        root=dataset_dir,
+        data_type='frame',
+        frames_number=encoder_config.source_time_steps,
+        split_by=encoder_config.split_by,
+    )
     dataset_train, dataset_test = split_to_train_test_set(0.9, origin_set, 10)
+    dataset_train = encoding.EncodedFrameDataset(dataset_train, encoder_config)
+    dataset_test = encoding.EncodedFrameDataset(dataset_test, encoder_config)
     print("Took", time.time() - st)
 
     print("Creating data loaders")
@@ -314,6 +326,53 @@ def load_data(dataset_dir, distributed, T):
         test_sampler = torch.utils.data.SequentialSampler(dataset_test)
 
     return dataset_train, dataset_test, train_sampler, test_sampler
+
+
+def build_run_paths(args, encoder_config):
+    run_id = encoding.build_run_id(args, encoder_config)
+    run_dir = Path(args.output_dir) / run_id
+    output_dir = run_dir / f'lr{args.lr}'
+    logs_dir = run_dir / f'lr{args.lr}_logs'
+    profile_dir = run_dir / 'profile'
+    return run_id, str(run_dir), str(output_dir), str(logs_dir), str(profile_dir)
+
+
+def write_json_on_master(path, payload):
+    if not utils.is_main_process():
+        return
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open('w', encoding='utf-8') as f:
+        json.dump(payload, f, indent=2)
+
+
+def append_metrics_on_master(path, row):
+    if not utils.is_main_process():
+        return
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    exists = path.exists()
+    with path.open('a', encoding='utf-8', newline='') as f:
+        writer = csv.DictWriter(f, fieldnames=list(row.keys()))
+        if not exists:
+            writer.writeheader()
+        writer.writerow(row)
+
+
+def encoder_meta_from_config(encoder_config):
+    sample = torch.zeros(encoder_config.source_time_steps, 2, 128, 128)
+    _, meta = encoding.encode_frame_tensor(sample, encoder_config.encoder)
+    return meta
+
+
+def collect_and_save_input_profile(data_loader, profile_dir, max_batches):
+    collector = encoding.InputActivityCollector()
+    for batch_idx, (image, _) in enumerate(data_loader):
+        if batch_idx >= max_batches:
+            break
+        collector.update(image.float(), batch_idx)
+    return encoding.save_input_activity_profile(profile_dir, collector)
+
 
 def main(args):
 
@@ -327,35 +386,24 @@ def main(args):
     utils.init_distributed_mode(args)
     print(args)
 
-    output_dir = os.path.join(args.output_dir, f'{args.model}_b{args.batch_size}_T{args.T}')
+    encoder_config = encoding.resolve_encoder_config(args)
+    args.T = encoder_config.time_steps
+    args.in_channels = encoder_config.in_channels
+    args.source_time_steps = encoder_config.source_time_steps
+    args.time_steps = encoder_config.time_steps
 
-    if args.T_train:
-        output_dir += f'_Ttrain{args.T_train}'
-
-    if args.weight_decay:
-        output_dir += f'_wd{args.weight_decay}'
-
-
-    if args.opt == 'adamw':
-        output_dir += '_adamw'
-    else:
-        output_dir += '_sgd'
-
-    if args.connect_f:
-        output_dir += f'_cnf_{args.connect_f}'
-
+    run_id, run_dir, output_dir, logs_dir, profile_dir = build_run_paths(args, encoder_config)
     if not os.path.exists(output_dir):
         utils.mkdir(output_dir)
-
-    output_dir = os.path.join(output_dir, f'lr{args.lr}')
-    if not os.path.exists(output_dir):
-        utils.mkdir(output_dir)
+    if utils.is_main_process():
+        Path(logs_dir).mkdir(parents=True, exist_ok=True)
+        Path(profile_dir).mkdir(parents=True, exist_ok=True)
 
     device = torch.device(args.device)
 
     data_path = args.data_path
 
-    dataset_train, dataset_test, train_sampler, test_sampler = load_data(data_path, args.distributed, args.T)
+    dataset_train, dataset_test, train_sampler, test_sampler = load_data(data_path, args.distributed, encoder_config)
 
     data_loader = torch.utils.data.DataLoader(
         dataset=dataset_train,
@@ -377,6 +425,22 @@ def main(args):
     # dataset_train, dataset_test, train_sampler, test_sampler = load_data(data_path, args.distributed, args.T)
     # print(f'dataset_train:{dataset_train.__len__()}, dataset_test:{dataset_test.__len__()}')
 
+    encoder_meta = encoder_meta_from_config(encoder_config)
+    if utils.is_main_process():
+        encoding.save_encoder_meta(profile_dir, encoder_meta)
+        write_json_on_master(
+            os.path.join(logs_dir, 'config.json'),
+            {
+                'run_id': run_id,
+                'run_dir': run_dir,
+                'args': vars(args),
+                'encoder': encoder_config.to_dict(),
+                'encoder_meta': encoder_meta.to_dict(),
+            },
+        )
+        if args.profile_input_activity:
+            collect_and_save_input_profile(data_loader_test, profile_dir, args.input_profile_batches)
+
     model = create_model(
         #'Spikingformer',
         args.model,
@@ -385,10 +449,20 @@ def main(args):
         drop_rate=0.,
         drop_path_rate=0.1,
         drop_block_rate=None,
+        in_channels=encoder_config.in_channels,
     )
     print("Creating model")
     n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"number of params: {n_parameters}")
+    write_json_on_master(
+        os.path.join(logs_dir, 'model_summary.json'),
+        {
+            'model': args.model,
+            'model_params': int(n_parameters),
+            'in_channels': encoder_config.in_channels,
+            'effective_snn_steps': encoder_config.time_steps,
+        },
+    )
     model.to(device)
     if args.distributed and args.sync_bn:
         model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
@@ -428,9 +502,9 @@ def main(args):
     if args.tb and utils.is_main_process():
         purge_step_train = args.start_epoch
         purge_step_te = args.start_epoch
-        train_tb_writer = SummaryWriter(output_dir + '_logs/train', purge_step=purge_step_train)
-        te_tb_writer = SummaryWriter(output_dir + '_logs/te', purge_step=purge_step_te)
-        with open(output_dir + '_logs/args.txt', 'w', encoding='utf-8') as args_txt:
+        train_tb_writer = SummaryWriter(os.path.join(logs_dir, 'train'), purge_step=purge_step_train)
+        te_tb_writer = SummaryWriter(os.path.join(logs_dir, 'te'), purge_step=purge_step_te)
+        with open(os.path.join(logs_dir, 'args.txt'), 'w', encoding='utf-8') as args_txt:
             args_txt.write(str(args))
 
         print(f'purge_step_train={purge_step_train}, purge_step_te={purge_step_te}')
@@ -454,13 +528,13 @@ def main(args):
         save_max = False
         if args.distributed:
             train_sampler.set_epoch(epoch)
-        if epoch >= 75:
+        if epoch >= 75 and mixup_fn is not None:
             mixup_fn.mixup_enabled = False
         train_loss, train_acc1, train_acc5 = train_one_epoch(
             model, criterion_train, optimizer, data_loader, device, epoch,
             args.print_freq, scaler, args.T_train,
             train_snn_aug, train_trivalaug, mixup_fn)
-        if utils.is_main_process():
+        if train_tb_writer is not None and utils.is_main_process():
             train_tb_writer.add_scalar('train_loss', train_loss, epoch)
             train_tb_writer.add_scalar('train_acc1', train_acc1, epoch)
             train_tb_writer.add_scalar('train_acc5', train_acc5, epoch)
@@ -474,6 +548,20 @@ def main(args):
                 te_tb_writer.add_scalar('test_acc1', test_acc1, epoch)
                 te_tb_writer.add_scalar('test_acc5', test_acc5, epoch)
 
+        append_metrics_on_master(
+            os.path.join(logs_dir, 'metrics.csv'),
+            {
+                'epoch': epoch,
+                'train_loss': train_loss,
+                'train_acc1': train_acc1,
+                'train_acc5': train_acc5,
+                'test_loss': test_loss,
+                'test_acc1': test_acc1,
+                'test_acc5': test_acc5,
+                'lr': optimizer.param_groups[0]["lr"],
+                'max_test_acc1': max(max_test_acc1, test_acc1),
+            },
+        )
 
         if max_test_acc1 < test_acc1:
             max_test_acc1 = test_acc1

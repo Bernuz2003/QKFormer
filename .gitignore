@@ -52,3 +52,6 @@ cifar10-dvs/frames_number_*_split_by_*/
 *.sandbox/
 singularity-cache/
 apptainer-cache/
+
+docs/
+scripts/

@@ -18,6 +18,7 @@ from timm.models import create_model
 from torch import nn
 
 import model as qkformer_models  # noqa: F401 - registers timm model names.
+import encoding
 
 
 @dataclass
@@ -117,13 +118,32 @@ class QKFormerActivityProfiler:
                 writer.writerow(asdict(record))
 
         summary = summarize_activity(self.records)
+        layer_summary = summary.pop("layer_summary", [])
+        stage_summary = summary.get("stage_summary", [])
+        write_rows_csv(output_dir / "layer_summary.csv", layer_summary)
+        write_rows_csv(output_dir / "stage_summary.csv", stage_summary)
+
         summary.update(metadata)
-        summary_path = output_dir / "summary_metrics.json"
+        batch_size = int(metadata.get("batch_size", 0) or 0)
+        if batch_size > 0:
+            summary["total_estimated_sops_per_sample"] = summary["total_estimated_sops_per_batch"] / batch_size
+        summary["model_activity"] = {
+            "total_estimated_sops_per_batch": summary.get("total_estimated_sops_per_batch", 0.0),
+            "total_estimated_sops_per_sample": summary.get("total_estimated_sops_per_sample", 0.0),
+            "weighted_output_firing_rate": summary.get("weighted_output_firing_rate", 0.0),
+            "patch_embed_sops_share_pct": summary.get("patch_embed_sops_share_pct", 0.0),
+        }
+        summary_path = output_dir / "profile_summary.json"
         with summary_path.open("w", encoding="utf-8") as f:
+            json.dump(summary, f, indent=2)
+        legacy_summary_path = output_dir / "summary_metrics.json"
+        with legacy_summary_path.open("w", encoding="utf-8") as f:
             json.dump(summary, f, indent=2)
 
         return {
             "layerwise_path": str(layerwise_path),
+            "layer_summary_path": str(output_dir / "layer_summary.csv"),
+            "stage_summary_path": str(output_dir / "stage_summary.csv"),
             "summary_path": str(summary_path),
             "summary": summary,
         }
@@ -378,6 +398,18 @@ def dense_macs(module: nn.Module, out: torch.Tensor) -> float:
     return 0.0
 
 
+def write_rows_csv(path: str | Path, rows: list[dict[str, Any]]) -> None:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fieldnames = sorted({key for row in rows for key in row.keys()})
+    with path.open("w", encoding="utf-8", newline="") as f:
+        if not fieldnames:
+            return
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
 def summarize_activity(records: list[LayerActivity]) -> dict[str, Any]:
     if not records:
         return {
@@ -391,6 +423,11 @@ def summarize_activity(records: list[LayerActivity]) -> dict[str, Any]:
             "weighted_output_firing_rate": 0.0,
             "max_layer_output_firing_rate": 0.0,
             "stage_summary": [],
+            "layer_summary": [],
+            "patch_embed_total_sops": 0.0,
+            "patch_embed_sops_share_pct": 0.0,
+            "patch_embed_total_params": 0,
+            "patch_embed_params_share_pct": 0.0,
         }
 
     grouped: dict[str, list[LayerActivity]] = defaultdict(list)
@@ -421,34 +458,56 @@ def summarize_activity(records: list[LayerActivity]) -> dict[str, Any]:
     total_spikes = sum(float(row["output_spike_count"]) for row in binary_layers)
     total_numel = sum(float(row["output_numel"]) for row in binary_layers)
 
+    total_params = int(sum(int(row["params"]) for row in layer_rows))
+    total_dense_macs = sum(float(row["dense_macs"]) for row in layer_rows)
+    total_attention_ops = sum(float(row["attention_ops"]) for row in layer_rows)
+    total_estimated_sops = sum(float(row["estimated_sops"]) for row in layer_rows)
+
     stage_rows = []
     for stage, rows in group_rows(layer_rows, "network_stage").items():
         binary_stage_rows = [row for row in rows if row["is_binary_output"]]
         stage_spikes = sum(float(row["output_spike_count"]) for row in binary_stage_rows)
         stage_numel = sum(float(row["output_numel"]) for row in binary_stage_rows)
+        stage_params = int(sum(int(row["params"]) for row in rows))
+        stage_sops = sum(float(row["estimated_sops"]) for row in rows)
         stage_rows.append(
             {
                 "network_stage": stage,
                 "layers": len(rows),
-                "params": int(sum(int(row["params"]) for row in rows)),
+                "params": stage_params,
                 "dense_macs_per_batch": sum(float(row["dense_macs"]) for row in rows),
                 "attention_ops_per_batch": sum(float(row["attention_ops"]) for row in rows),
-                "estimated_sops_per_batch": sum(float(row["estimated_sops"]) for row in rows),
+                "estimated_sops_per_batch": stage_sops,
                 "weighted_output_firing_rate": stage_spikes / max(1.0, stage_numel),
+                "sops_share_pct": 100.0 * stage_sops / max(1e-12, total_estimated_sops),
+                "params_share_pct": 100.0 * stage_params / max(1, total_params),
+                "is_patch_embed": stage.startswith("patch_embed"),
             }
         )
+    ranked_stage_rows = sorted(stage_rows, key=lambda row: float(row["estimated_sops_per_batch"]), reverse=True)
+    for rank, row in enumerate(ranked_stage_rows, start=1):
+        row["stage_activity_rank"] = rank
+
+    patch_embed_rows = [row for row in stage_rows if row["is_patch_embed"]]
+    patch_embed_sops = sum(float(row["estimated_sops_per_batch"]) for row in patch_embed_rows)
+    patch_embed_params = int(sum(int(row["params"]) for row in patch_embed_rows))
 
     return {
         "profiled_layers": len(layer_rows),
         "profiled_binary_layers": len(binary_layers),
-        "total_params_profiled": int(sum(int(row["params"]) for row in layer_rows)),
-        "total_dense_macs_per_batch": sum(float(row["dense_macs"]) for row in layer_rows),
-        "total_attention_ops_per_batch": sum(float(row["attention_ops"]) for row in layer_rows),
-        "total_estimated_sops_per_batch": sum(float(row["estimated_sops"]) for row in layer_rows),
+        "total_params_profiled": total_params,
+        "total_dense_macs_per_batch": total_dense_macs,
+        "total_attention_ops_per_batch": total_attention_ops,
+        "total_estimated_sops_per_batch": total_estimated_sops,
         "mean_layer_output_firing_rate": mean(row["output_firing_rate"] for row in binary_layers),
         "weighted_output_firing_rate": total_spikes / max(1.0, total_numel),
         "max_layer_output_firing_rate": max((float(row["output_firing_rate"]) for row in binary_layers), default=0.0),
         "stage_summary": sorted(stage_rows, key=lambda row: row["network_stage"]),
+        "layer_summary": sorted(layer_rows, key=lambda row: float(row["estimated_sops"]), reverse=True),
+        "patch_embed_total_sops": patch_embed_sops,
+        "patch_embed_sops_share_pct": 100.0 * patch_embed_sops / max(1e-12, total_estimated_sops),
+        "patch_embed_total_params": patch_embed_params,
+        "patch_embed_params_share_pct": 100.0 * patch_embed_params / max(1, total_params),
     }
 
 
@@ -492,8 +551,9 @@ def split_to_train_test_set(
 
 
 def build_data_loader(args: argparse.Namespace) -> Iterable[tuple[torch.Tensor, torch.Tensor]]:
+    encoder_config = encoding.resolve_encoder_config(args)
     if args.synthetic:
-        return synthetic_loader(args.batch_size, args.T, args.input_size, args.max_batches)
+        return list(synthetic_loader(args.batch_size, encoder_config, args.input_size, args.max_batches))
 
     if not args.data_path:
         raise ValueError("Set --data-path for CIFAR10-DVS profiling, or use --synthetic for a dry run.")
@@ -501,11 +561,12 @@ def build_data_loader(args: argparse.Namespace) -> Iterable[tuple[torch.Tensor, 
     origin_set = cifar10_dvs.CIFAR10DVS(
         root=args.data_path,
         data_type="frame",
-        frames_number=args.T,
-        split_by="number",
+        frames_number=encoder_config.source_time_steps,
+        split_by=encoder_config.split_by,
     )
     dataset_train, dataset_test = split_to_train_test_set(args.train_ratio, origin_set, args.num_classes)
     dataset = dataset_train if args.split == "train" else dataset_test
+    dataset = encoding.EncodedFrameDataset(dataset, encoder_config)
     return torch.utils.data.DataLoader(
         dataset=dataset,
         batch_size=args.batch_size,
@@ -516,9 +577,14 @@ def build_data_loader(args: argparse.Namespace) -> Iterable[tuple[torch.Tensor, 
     )
 
 
-def synthetic_loader(batch_size: int, time_steps: int, input_size: int, batches: int):
+def synthetic_loader(batch_size: int, encoder_config: encoding.EncoderConfig, input_size: int, batches: int):
     for _ in range(batches):
-        image = torch.randint(0, 2, (batch_size, time_steps, 2, input_size, input_size)).float()
+        source = torch.randint(
+            0,
+            4,
+            (batch_size, encoder_config.source_time_steps, 2, input_size, input_size),
+        ).float()
+        image = torch.stack([encoding.encode_frame_tensor(sample, encoder_config.encoder)[0] for sample in source])
         target = torch.zeros(batch_size, dtype=torch.long)
         yield image, target
 
@@ -555,7 +621,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--batch-size", default=16, type=int)
     parser.add_argument("--workers", default=4, type=int)
-    parser.add_argument("--T", default=16, type=int, help="simulation steps")
+    parser.add_argument("--T", default=16, type=int, help="backward-compatible alias for --time-steps")
     parser.add_argument("--max-batches", default=8, type=int, help="number of batches to profile")
     parser.add_argument("--split", choices=("train", "test"), default="test")
     parser.add_argument("--train-ratio", default=0.9, type=float)
@@ -564,20 +630,26 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--strict-load", action="store_true", help="use strict checkpoint loading")
     parser.add_argument("--synthetic", action="store_true", help="profile random binary inputs instead of CIFAR10-DVS")
     parser.add_argument("--input-size", default=128, type=int, help="synthetic input height/width")
+    encoding.add_encoder_args(parser)
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
     run_id = args.run_id or f"{args.model}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
-    output_dir = Path(args.output_dir) / run_id
+    output_dir = Path(args.output_dir)
+    if args.run_id and output_dir.name not in {args.run_id, "profile"}:
+        output_dir = output_dir / run_id
     device = torch.device(args.device)
+    encoder_config = encoding.resolve_encoder_config(args)
+    args.T = encoder_config.time_steps
 
     model = create_model(
         args.model,
         pretrained=False,
         drop_rate=0.0,
         drop_path_rate=args.drop_path_rate,
+        in_channels=encoder_config.in_channels,
     )
     load_checkpoint(model, args.checkpoint, args.strict_load)
     if device.type == "cpu":
@@ -587,8 +659,13 @@ def main() -> None:
 
     total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     data_loader = build_data_loader(args)
-    profiler = QKFormerActivityProfiler(model, run_id=run_id, time_steps=args.T)
+    profiler = QKFormerActivityProfiler(model, run_id=run_id, time_steps=encoder_config.time_steps)
     profiler.attach()
+    input_collector = encoding.InputActivityCollector()
+    _, encoder_meta = encoding.encode_frame_tensor(
+        torch.zeros(encoder_config.source_time_steps, 2, args.input_size, args.input_size),
+        encoder_config.encoder,
+    )
 
     profiled_batches = 0
     try:
@@ -597,6 +674,7 @@ def main() -> None:
                 if batch_index >= args.max_batches:
                     break
                 image = image.to(device, non_blocking=True).float()
+                input_collector.update(image.cpu(), batch_index)
                 profiler.set_batch_index(batch_index)
                 profiler.enable()
                 model(image)
@@ -612,13 +690,17 @@ def main() -> None:
         "model": args.model,
         "checkpoint": args.checkpoint,
         "device": str(device),
-        "time_steps": args.T,
+        "time_steps": encoder_config.time_steps,
         "batch_size": args.batch_size,
         "profiled_batches": profiled_batches,
         "total_params_model": int(total_params),
         "synthetic": bool(args.synthetic),
         "split": args.split,
+        "encoder": encoder_meta.to_dict(),
+        "input_activity": input_collector.summarize(),
     }
+    encoding.save_encoder_meta(output_dir, encoder_meta)
+    encoding.save_input_activity_profile(output_dir, input_collector)
     saved = profiler.save(output_dir, metadata)
     print(f"Profiled {profiled_batches} batches with {len(profiler.records)} layer records.")
     print(f"Layerwise CSV: {saved['layerwise_path']}")
